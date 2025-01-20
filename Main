@@ -1,0 +1,127 @@
+#include <WiFi.h>
+#include <HTTPClient.h>
+#include "DHT.h"
+
+// Pin Definitions
+#define DHTPIN 4           // DHT sensor data pin
+#define DHTTYPE DHT22      // Type of DHT sensor
+#define LDR_PIN 34         // Analog pin connected to the LDR (Light Dependent Resistor)
+#define PMS_RX_PIN 16      // RX pin for PMS7003 (hardware serial)
+#define PMS_TX_PIN 17      // TX pin for PMS7003 (hardware serial)
+const char *ssid = "********";  // Replace with your Wi-Fi SSID
+const char *password = "********";    // Replace with your Wi-Fi password
+String IFTTT_Key = "bpylLh4fTEtfLlv3vQgwB2";  // Replace with your Webhooks key
+String eventName = "DHT Sensor Data";  // The event name you set in IFTTT
+String IFTTTUrl = "https://maker.ifttt.com/trigger/" + eventName + "/with/key/" + IFTTT_Key;
+DHT dht(DHTPIN, DHTTYPE);
+
+// Initialize hardware serial for PMS7003
+HardwareSerial mySerial(1);  // Use Serial1 for PMS7003
+
+// Variable to hold sensor values
+float value1; // Humidity
+float value2; // Temperature (Celsius)
+float value3; // Light intensity percentage
+int pm25;     // PM2.5 concentration (µg/m³)
+
+void setup() {
+  Serial.begin(115200);  // Start the Serial Monitor
+  dht.begin();  // Initialize DHT sensor
+
+  // Initialize hardware serial for PMS7003 (use 9600 baud rate)
+  mySerial.begin(9600, SERIAL_8N1, PMS_RX_PIN, PMS_TX_PIN);
+
+  // Connect to Wi-Fi
+  WiFi.begin(ssid, password);
+  while (WiFi.status() != WL_CONNECTED) {
+    delay(500);
+    Serial.print(".");
+  }
+  Serial.println("\nConnected to WiFi!");
+}
+
+float getLightPercentage(void) {
+  int ldrRawVal = analogRead(LDR_PIN);    
+  float percentage = ((float)((ldrRawVal * 100) / 4096));  // For ESP32 (12-bit ADC)
+  return percentage;
+}
+
+void readPM25(void) {
+  // Send PMS7003 command to get the data
+  mySerial.write(0x42);  // Command byte to request data
+  mySerial.write(0x4D);  // Command byte to request data
+  mySerial.write(0x00);  // Command byte to request data
+  mySerial.write(0x01);  // Command byte to request data
+
+  // Wait for the data response from the PMS7003
+  delay(1000);
+
+  // Read the response from PMS7003 (16-bit data frame)
+  if (mySerial.available()) {
+    byte buffer[32];
+    mySerial.readBytes(buffer, 32);
+
+    // The PM2.5 value is located at byte 10 and 11
+    pm25 = (buffer[10] << 8) | buffer[11];
+    Serial.print("PM2.5: ");
+    Serial.println(pm25);  // Print PM2.5 value
+  }
+}
+
+void sendDataToSheet(void) {
+  // Create the URL with sensor values
+  String url = IFTTTUrl + "?value1=" + String(value1, 2) +  // Humidity with 2 decimal places
+               "&value2=" + String(value2, 2) +            // Temperature with 2 decimal places
+               "&value3=" + String(value3, 2) +            // Light percentage with 2 decimal places
+               "&value4=" + String(pm25);                  // PM2.5 value
+
+  // Send data to IFTTT
+  HTTPClient http;
+  Serial.print("[HTTP] begin...\n");
+  http.begin(url);  // HTTP connection
+
+  Serial.print("[HTTP] GET...\n");
+  int httpCode = http.GET();  // Send GET request
+  if (httpCode > 0) {
+    Serial.printf("[HTTP] GET... code: %d\n", httpCode);
+    if (httpCode == HTTP_CODE_OK) {
+      String payload = http.getString();
+      Serial.println(payload);  // Print response from IFTTT (if any)
+    }
+  } else {
+    Serial.printf("[HTTP] GET... failed, error: %s\n", http.errorToString(httpCode).c_str());
+  }
+  http.end();  // Close HTTP connection
+}
+
+void loop() {
+  // Read sensor values
+  value1 = dht.readHumidity();  // Read humidity
+  value2 = dht.readTemperature();  // Read temperature in Celsius
+  value3 = getLightPercentage();  // Read light intensity from LDR
+
+  // Check if any sensor readings failed
+  if (isnan(value1) || isnan(value2)) {
+    Serial.println("Failed to read from DHT sensor!");
+    return;
+  }
+
+  // Read PM2.5 value from PMS7003
+  readPM25();
+
+  // Print sensor values to Serial Monitor
+  Serial.print("Humidity: ");
+  Serial.print(value1);
+  Serial.print(" %  Temperature: ");
+  Serial.print(value2);
+  Serial.print(" °C  Light Intensity: ");
+  Serial.print(value3);
+  Serial.print(" %  PM2.5: ");
+  Serial.println(pm25);
+
+  // Send data to IFTTT
+  sendDataToSheet();
+
+  // Wait for 10 seconds before taking new readings
+  delay(10000);
+}
