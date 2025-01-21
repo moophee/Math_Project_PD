@@ -1,0 +1,234 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Weather & Air Quality Prediction</title>
+  <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+  <style>
+    body {
+      font-family: Arial, sans-serif;
+      margin: 0;
+      padding: 0;
+      background-color: #f4f4f4;
+      color: #333;
+    }
+    header {
+      background: #0078d7;
+      color: white;
+      padding: 1rem 0;
+      text-align: center;
+    }
+    main {
+      padding: 20px;
+      max-width: 800px;
+      margin: 20px auto;
+      background: white;
+      box-shadow: 0 4px 8px rgba(0, 0, 0, 0.1);
+      border-radius: 8px;
+    }
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      margin: 20px 0;
+    }
+    table, th, td {
+      border: 1px solid #ddd;
+    }
+    th, td {
+      padding: 12px;
+      text-align: center;
+    }
+    th {
+      background-color: #0078d7;
+      color: white;
+    }
+    .btn {
+      display: inline-block;
+      margin-top: 20px;
+      padding: 10px 20px;
+      background: #0078d7;
+      color: white;
+      text-decoration: none;
+      border-radius: 5px;
+      cursor: pointer;
+    }
+    .btn:hover {
+      background: #005bb5;
+    }
+    .input-row {
+      display: flex;
+      justify-content: space-between;
+      margin: 20px 0;
+    }
+    .input-row input {
+      padding: 10px;
+      flex: 1;
+      margin: 0 10px;
+      border: 1px solid #ddd;
+      border-radius: 5px;
+    }
+    canvas {
+      max-width: 100%;
+      margin: 20px 0;
+    }
+  </style>
+</head>
+<body>
+  <header>
+    <h1>Weather & Air Quality Prediction</h1>
+    <p>Input Historical Data and Predict Future Values with Graph</p>
+  </header>
+  <main>
+    <div class="input-row">
+      <input type="number" id="x-value" placeholder="Time Step (hours)" />
+      <input type="number" id="temperature" placeholder="Temperature (°C)" />
+      <input type="number" id="humidity" placeholder="Humidity (%)" />
+      <input type="number" id="pm25" placeholder="PM2.5 (µg/m³)" />
+      <button class="btn" onclick="addRow()">Add Row</button>
+    </div>
+    <h2>Historical Data</h2>
+    <table id="data-table">
+      <thead>
+        <tr>
+          <th>Time Step (hours)</th>
+          <th>Temperature (°C)</th>
+          <th>Humidity (%)</th>
+          <th>PM2.5 (µg/m³)</th>
+        </tr>
+      </thead>
+      <tbody>
+        <!-- User-inputted data will appear here -->
+      </tbody>
+    </table>
+    <button class="btn" onclick="predictAndPlot()">Predict and Show Graph</button>
+    <canvas id="predictionChart"></canvas>
+  </main>
+
+  <script>
+    const historicalData = [];
+    let chart;
+
+    function addRow() {
+      const x = parseFloat(document.getElementById('x-value').value);
+      const temperature = parseFloat(document.getElementById('temperature').value);
+      const humidity = parseFloat(document.getElementById('humidity').value);
+      const pm25 = parseFloat(document.getElementById('pm25').value);
+
+      if (isNaN(x) || isNaN(temperature) || isNaN(humidity) || isNaN(pm25)) {
+        alert('Please fill out all fields with valid numbers.');
+        return;
+      }
+
+      historicalData.push({ x, temp: temperature, humidity, pm25 });
+
+      const tableBody = document.querySelector('#data-table tbody');
+      const row = document.createElement('tr');
+      row.innerHTML = `
+        <td>${x}</td>
+        <td>${temperature}</td>
+        <td>${humidity}</td>
+        <td>${pm25}</td>
+      `;
+      tableBody.appendChild(row);
+
+      document.getElementById('x-value').value = '';
+      document.getElementById('temperature').value = '';
+      document.getElementById('humidity').value = '';
+      document.getElementById('pm25').value = '';
+    }
+
+    function linearRegression(data, key) {
+      const n = data.length;
+      const x = data.map(item => item.x);
+      const y = data.map(item => item[key]);
+
+      const xSum = x.reduce((a, b) => a + b, 0);
+      const ySum = y.reduce((a, b) => a + b, 0);
+      const xSqSum = x.reduce((a, b) => a + b * b, 0);
+      const xySum = x.reduce((a, b, i) => a + b * y[i], 0);
+
+      const slope = (n * xySum - xSum * ySum) / (n * xSqSum - xSum * xSum);
+      const intercept = (ySum - slope * xSum) / n;
+
+      return { slope, intercept };
+    }
+
+    function predictAndPlot() {
+      if (historicalData.length < 2) {
+        alert('Please input at least 2 rows of data for prediction.');
+        return;
+      }
+
+      const tempModel = linearRegression(historicalData, 'temp');
+      const humidityModel = linearRegression(historicalData, 'humidity');
+      const pm25Model = linearRegression(historicalData, 'pm25');
+
+      const predictions = [];
+      const safePM25 = 50;
+
+      for (let i = 1; i <= 6; i++) {
+        const x = Math.max(...historicalData.map(item => item.x)) + i;
+        predictions.push({
+          x,
+          temp: (tempModel.slope * x + tempModel.intercept).toFixed(2),
+          humidity: (humidityModel.slope * x + humidityModel.intercept).toFixed(2),
+          pm25: (pm25Model.slope * x + pm25Model.intercept).toFixed(2),
+        });
+      }
+
+      const labels = predictions.map(p => `${p.x}h`);
+      const tempData = predictions.map(p => p.temp);
+      const humidityData = predictions.map(p => p.humidity);
+      const pm25Data = predictions.map(p => p.pm25);
+      const safeLine = Array(6).fill(safePM25);
+
+      const ctx = document.getElementById('predictionChart').getContext('2d');
+      if (chart) chart.destroy();
+      chart = new Chart(ctx, {
+        type: 'line',
+        data: {
+          labels,
+          datasets: [
+            {
+              label: 'Temperature (°C)',
+              data: tempData,
+              borderColor: 'red',
+              fill: false,
+            },
+            {
+              label: 'Humidity (%)',
+              data: humidityData,
+              borderColor: 'blue',
+              fill: false,
+            },
+            {
+              label: 'PM2.5 (µg/m³)',
+              data: pm25Data,
+              borderColor: 'green',
+              fill: false,
+            },
+            {
+              label: 'Safe PM2.5 (50 µg/m³)',
+              data: safeLine,
+              borderColor: 'orange',
+              borderDash: [5, 5],
+              fill: false,
+            },
+          ],
+        },
+        options: {
+          responsive: true,
+          plugins: {
+            legend: { position: 'top' },
+          },
+          scales: {
+            x: { title: { display: true, text: 'Time (hours)' } },
+            y: { title: { display: true, text: 'Values' } },
+          },
+        },
+      });
+    }
+  </script>
+</body>
+</html>
